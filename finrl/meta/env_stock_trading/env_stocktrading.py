@@ -133,7 +133,7 @@ class StockTradingEnv(gym.Env):
         if len(self.df.tic.unique()) > 1:
         # Add space for technical indicators (excluding vix and turbulence)
         # Each Bollinger Band (upper and lower) needs its own space
-        tech_indicators = []
+            tech_indicators = []
     for tech in self.tech_indicator_list:
             if tech not in ['vix', 'turbulence']:
                 if tech in ['boll_ub', 'boll_lb']:
