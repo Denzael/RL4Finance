@@ -81,8 +81,9 @@ class StockTradingEnv(gym.Env):
                 'dx': 0.3
             },
             'volatility': {
-                'bbands': 1.0
-            }
+        'boll_ub': 0.5,
+        'boll_lb': 0.5
+    }
         }
         
         # Category weights
@@ -123,30 +124,43 @@ class StockTradingEnv(gym.Env):
         self._initialize_trading_memory()
         self._seed()
 
-    def _calculate_state_space(self):
-        """Calculate the total dimension of the state space"""
-        # Base state components: [cash] + [prices] + [shares]
-        state_space = 1 + self.stock_dim + self.stock_dim
+   def _calculate_state_space(self):
+    """Calculate the total dimension of the state space"""
+    # Base state components: [cash] + [prices] + [shares]
+    state_space = 1 + self.stock_dim + self.stock_dim
+    
+    # For multiple stocks
+    if len(self.df.tic.unique()) > 1:
+        # Add space for technical indicators (excluding vix and turbulence)
+        # Each Bollinger Band (upper and lower) needs its own space
+        tech_indicators = []
+        for tech in self.tech_indicator_list:
+            if tech not in ['vix', 'turbulence']:
+                if tech in ['boll_ub', 'boll_lb']:
+                    # Add each band separately
+                    tech_indicators.append(tech)
+                else:
+                    tech_indicators.append(tech)
+        state_space += len(tech_indicators) * self.stock_dim
+    else:
+        # For single stock, each technical indicator only needs one value
+        tech_indicators = []
+        for tech in self.tech_indicator_list:
+            if tech not in ['vix', 'turbulence']:
+                if tech in ['boll_ub', 'boll_lb']:
+                    # Add each band separately
+                    tech_indicators.append(tech)
+                else:
+                    tech_indicators.append(tech)
+        state_space += len(tech_indicators)
+    
+    # Add space for risk indicators (these are market-wide, so only add 1 each)
+    if 'vix' in self.tech_indicator_list:
+        state_space += 1
+    if 'turbulence' in self.tech_indicator_list:
+        state_space += 1
         
-        # For multiple stocks
-        if len(self.df.tic.unique()) > 1:
-            # Add space for technical indicators (excluding vix and turbulence)
-            tech_indicators = [tech for tech in self.tech_indicator_list 
-                             if tech not in ['vix', 'turbulence']]
-            state_space += len(tech_indicators) * self.stock_dim
-        else:
-            # For single stock, each technical indicator only needs one value
-            tech_indicators = [tech for tech in self.tech_indicator_list 
-                             if tech not in ['vix', 'turbulence']]
-            state_space += len(tech_indicators)
-        
-        # Add space for risk indicators (these are market-wide, so only add 1 each)
-        if 'vix' in self.tech_indicator_list:
-            state_space += 1
-        if 'turbulence' in self.tech_indicator_list:
-            state_space += 1
-            
-        return state_space
+    return state_space
 
     def _initiate_state(self):
         """Initialize the state space"""
