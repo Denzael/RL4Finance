@@ -223,66 +223,205 @@ class StockTradingEnv(gym.Env):
                 state.append(self.data['turbulence'])
         
         return state
-    
-    def get_portfolio_stats(self):
-        """Calculate portfolio statistics with risk metrics"""
-        df_returns = pd.DataFrame(self.asset_memory, columns=['total_assets'])
-        df_returns['returns'] = df_returns['total_assets'].pct_change()
-        df_returns['date'] = self.date_memory
-        
-        stats = {
-            'Total Return': ((df_returns['total_assets'].iloc[-1] - df_returns['total_assets'].iloc[0]) / 
-                           df_returns['total_assets'].iloc[0]),
-            'Annual Volatility': df_returns['returns'].std() * np.sqrt(252),
-            'Sharpe Ratio': (df_returns['returns'].mean() * 252) / (df_returns['returns'].std() * np.sqrt(252))
-            if df_returns['returns'].std() != 0 else 0,
-            'Max Drawdown': (df_returns['total_assets'] / df_returns['total_assets'].cummax() - 1).min(),
-            'Total Trades': self.trades,
-            'Total Cost': self.cost
+
+    def _initialize_trading_memory(self):
+        """Initialize trading memory for tracking costs and trades"""
+        self.trades = 0
+        self.cost = 0
+        self.trading_memory = {
+            'buys': [],
+            'sells': [],
+            'holds': [],
+            'costs': []
         }
+
+    def _assess_market_risk(self):
+        """
+        Assess market risk based on VIX and turbulence indicators
+        Returns risk levels and position sizing multiplier
+        """
+        # Get current VIX and turbulence values if available
+        vix_value = self.data['vix'].values[0] if 'vix' in self.data.columns else 0
+        turb_value = self.data[self.risk_indicator_col].values[0] if self.risk_indicator_col in self.data.columns else 0
         
-        # Add VIX and turbulence correlation if available
-        if 'vix' in self.data.columns:
-            vix_corr = df_returns['returns'].corr(self.df['vix'])
-            stats['VIX Correlation'] = vix_corr
-        
-        if self.risk_indicator_col in self.data.columns:
-            turb_corr = df_returns['returns'].corr(self.df[self.risk_indicator_col])
-            stats['Turbulence Correlation'] = turb_corr
-        
-        return stats
-    
-    def get_trading_history(self):
-        """Get detailed trading history"""
-        history = pd.DataFrame({
-            'date': self.date_memory[:-1],
-            'actions': self.actions_memory,
-            'rewards': self.rewards_memory,
-            'portfolio_value': self.asset_memory[:-1],
-        })
-        return history
-    
-    def calculate_transaction_costs(self):
-        """Calculate detailed transaction costs"""
-        return {
-            'total_cost': self.cost,
-            'average_cost_per_trade': self.cost / self.trades if self.trades > 0 else 0,
-            'cost_to_portfolio_value': self.cost / self.asset_memory[-1] if self.asset_memory else 0
-        }
-    
-    def _get_date(self):
-        """Get current date"""
-        if len(self.df.tic.unique()) > 1:
-            date = self.data.date.unique()[0]
+        # Assess VIX risk level
+        if vix_value >= self.risk_thresholds['vix_extreme']:
+            vix_risk = 'extreme'
+        elif vix_value >= self.risk_thresholds['vix_elevated']:
+            vix_risk = 'elevated'
         else:
-            date = self.data.date
-        return date
-    
-    def _seed(self, seed=None):
-        """Set random seed"""
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
-    
+            vix_risk = 'normal'
+        
+        # Assess turbulence risk level
+        if turb_value >= self.risk_thresholds['turbulence_extreme']:
+            turb_risk = 'extreme'
+        elif turb_value >= self.risk_thresholds['turbulence_elevated']:
+            turb_risk = 'elevated'
+        else:
+            turb_risk = 'normal'
+        
+        # Determine position sizing based on worst risk level
+        if 'extreme' in [vix_risk, turb_risk]:
+            position_size_mult = self.position_sizing['extreme']
+        elif 'elevated' in [vix_risk, turb_risk]:
+            position_size_mult = self.position_sizing['elevated']
+        else:
+            position_size_mult = self.position_sizing['normal']
+        
+        return {
+            'vix_risk': vix_risk,
+            'turbulence_risk': turb_risk,
+            'position_size_mult': position_size_mult
+        }
+
+    def step(self, actions):
+        """
+        Execute one step in the environment
+        Args:
+            actions: array of actions for each stock [-1, 1] where:
+                    -1 = sell maximum allowed
+                     1 = buy maximum allowed
+                     0 = hold
+        Returns:
+            next_state: new state after action
+            reward: reward for the action
+            done: whether episode is finished
+            info: additional information
+        """
+        self.terminal = self.day >= len(self.df.index.unique()) - 1
+        
+        if self.terminal:
+            return self.state, 0, True, {'date': self._get_date()}
+        
+        # Get current risk assessment
+        risk_assessment = self._assess_market_risk()
+        position_size_mult = risk_assessment['position_size_mult']
+        
+        # Calculate available amounts
+        begin_total_asset = self.state[0] + \
+            sum(np.array(self.num_stock_shares) * np.array(self.state[1:1+self.stock_dim]))
+        
+        # Process each action
+        argsort_actions = np.argsort(actions)
+        sell_index = argsort_actions[:np.where(actions < 0)[0].shape[0]]
+        buy_index = argsort_actions[::-1][:np.where(actions > 0)[0].shape[0]]
+        
+        for index in sell_index:
+            # Implement sell logic
+            actions_norm = actions[index]
+            if self.state[index + self.stock_dim + 1] > 0:
+                # Sell based on action and risk assessment
+                sell_num_shares = min(
+                    abs(actions_norm) * self.state[index + self.stock_dim + 1],
+                    self.state[index + self.stock_dim + 1]
+                )
+                sell_amount = self.state[index + 1] * sell_num_shares * (1 - self.sell_cost_pct[index])
+                
+                # Update state
+                self.state[0] += sell_amount
+                self.state[index + self.stock_dim + 1] -= sell_num_shares
+                self.cost += self.state[index + 1] * sell_num_shares * self.sell_cost_pct[index]
+                self.trades += 1
+                self.trading_memory['sells'].append({
+                    'day': self.day,
+                    'stock': index,
+                    'shares': sell_num_shares,
+                    'price': self.state[index + 1],
+                    'amount': sell_amount
+                })
+        
+        for index in buy_index:
+            # Implement buy logic
+            actions_norm = actions[index]
+            if self.state[0] > 0:
+                # Calculate maximum shares that can be bought
+                max_buy = self.state[0] // (self.state[index + 1] * (1 + self.buy_cost_pct[index]))
+                buy_num_shares = min(
+                    max_buy,
+                    self.hmax - self.state[index + self.stock_dim + 1]
+                )
+                buy_num_shares = min(
+                    buy_num_shares,
+                    actions_norm * self.hmax * position_size_mult
+                )
+                
+                buy_amount = self.state[index + 1] * buy_num_shares * (1 + self.buy_cost_pct[index])
+                
+                # Update state
+                self.state[0] -= buy_amount
+                self.state[index + self.stock_dim + 1] += buy_num_shares
+                self.cost += self.state[index + 1] * buy_num_shares * self.buy_cost_pct[index]
+                self.trades += 1
+                self.trading_memory['buys'].append({
+                    'day': self.day,
+                    'stock': index,
+                    'shares': buy_num_shares,
+                    'price': self.state[index + 1],
+                    'amount': buy_amount
+                })
+        
+        # Move to next day
+        self.day += 1
+        self.data = self.df.loc[self.day, :]
+        
+        # Update state
+        self.state = self._update_state()
+        
+        # Calculate reward
+        end_total_asset = self.state[0] + \
+            sum(np.array(self.num_stock_shares) * np.array(self.state[1:1+self.stock_dim]))
+        reward = (end_total_asset - begin_total_asset) * self.reward_scaling
+        
+        # Update memory
+        self.asset_memory   
+
+
+
+
+ def step(self, actions):
+        # ... (previous step implementation) ...
+        
+        # Update memory
+        self.asset_memory.append(end_total_asset)
+        self.rewards_memory.append(reward)
+        self.actions_memory.append(actions)
+        self.date_memory.append(self._get_date())
+        
+        return self.state, reward, False, {
+            'date': self._get_date(),
+            'cost': self.cost,
+            'trades': self.trades,
+            'risk_assessment': risk_assessment
+        }
+
+    def reset(self):
+        """
+        Reset the environment to initial state
+        Returns: initial state
+        """
+        self.day = 0
+        self.data = self.df.loc[self.day, :]
+        self.terminal = False
+        
+        # Reset state
+        if self.initial:
+            self.state = self._initiate_state()
+        else:
+            previous_total_asset = self.previous_state[0] + \
+                sum(np.array(self.num_stock_shares) * np.array(self.previous_state[1:1+self.stock_dim]))
+            self.state = [previous_total_asset] + self.previous_state[1:]
+        
+        # Reset memory
+        self.asset_memory = [self.initial_amount + 
+            np.sum(np.array(self.num_stock_shares) * np.array(self.state[1:1+self.stock_dim]))]
+        self.rewards_memory = []
+        self.actions_memory = []
+        self.date_memory = [self._get_date()]
+        
+        self._initialize_trading_memory()
+        
+        return self.state
+
     def render(self, mode='human'):
         """Render the environment"""
         if mode != 'human':
@@ -311,9 +450,22 @@ class StockTradingEnv(gym.Env):
         print("-" * 50)
         
         return self.state
-    
+
     def get_sb_env(self):
         """Get stable-baselines environment wrapper"""
         e = DummyVecEnv([lambda: self])
         obs = e.reset()
         return e, obs
+
+    def _seed(self, seed=None):
+        """Set random seed"""
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
+    def _get_date(self):
+        """Get current date"""
+        if len(self.df.tic.unique()) > 1:
+            date = self.data.date.unique()[0]
+        else:
+            date = self.data.date
+        return date
