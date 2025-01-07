@@ -392,93 +392,93 @@ def _calculate_state_space(self):
 
 
  def step(self, actions):
-        # ... (previous step implementation) ...
-        
-        # Update memory
-        self.asset_memory.append(end_total_asset)
-        self.rewards_memory.append(reward)
-        self.actions_memory.append(actions)
-        self.date_memory.append(self._get_date())
-        
-        return self.state, reward, False, {
-            'date': self._get_date(),
-            'cost': self.cost,
-            'trades': self.trades,
-            'risk_assessment': risk_assessment
-        }
+    # ... (previous step implementation) ...
+    
+    # Update memory
+    self.asset_memory.append(end_total_asset)
+    self.rewards_memory.append(reward)
+    self.actions_memory.append(actions)
+    self.date_memory.append(self._get_date())
+    
+    return self.state, reward, False, {
+        'date': self._get_date(),
+        'cost': self.cost,
+        'trades': self.trades,
+        'risk_assessment': risk_assessment
+    }
 
-    def reset(self):
-        """
-        Reset the environment to initial state
-        Returns: initial state
-        """
-        self.day = 0
-        self.data = self.df.loc[self.day, :]
-        self.terminal = False
-        
-        # Reset state
-        if self.initial:
-            self.state = self._initiate_state()
-        else:
-            previous_total_asset = self.previous_state[0] + \
-                sum(np.array(self.num_stock_shares) * np.array(self.previous_state[1:1+self.stock_dim]))
-            self.state = [previous_total_asset] + self.previous_state[1:]
-        
-        # Reset memory
-        self.asset_memory = [self.initial_amount + 
-            np.sum(np.array(self.num_stock_shares) * np.array(self.state[1:1+self.stock_dim]))]
-        self.rewards_memory = []
-        self.actions_memory = []
-        self.date_memory = [self._get_date()]
-        
-        self._initialize_trading_memory()
-        
-        return self.state
+def reset(self):
+    """
+    Reset the environment to initial state
+    Returns: initial state
+    """
+    self.day = 0
+    self.data = self.df.loc[self.day, :]
+    self.terminal = False
+    
+    # Reset state
+    if self.initial:
+        self.state = self._initiate_state()
+    else:
+        previous_total_asset = self.previous_state[0] + \
+            sum(np.array(self.num_stock_shares) * np.array(self.previous_state[1:1+self.stock_dim]))
+        self.state = [previous_total_asset] + self.previous_state[1:]
+    
+    # Reset memory
+    self.asset_memory = [self.initial_amount + 
+        np.sum(np.array(self.num_stock_shares) * np.array(self.state[1:1+self.stock_dim]))]
+    self.rewards_memory = []
+    self.actions_memory = []
+    self.date_memory = [self._get_date()]
+    
+    self._initialize_trading_memory()
+    
+    return self.state
 
-    def render(self, mode='human'):
-        """Render the environment"""
-        if mode != 'human':
-            raise NotImplementedError(f"{mode} mode is not supported")
-        
-        print(f"\nDate: {self._get_date()}")
-        print(f"Portfolio Value: ${self.asset_memory[-1]:,.2f}")
-        print(f"Cash: ${self.state[0]:,.2f}")
-        
-        risk_assessment = self._assess_market_risk()
-        print(f"\nRisk Assessment:")
-        print(f"VIX Risk Level: {risk_assessment['vix_risk']}")
-        print(f"Turbulence Risk Level: {risk_assessment['turbulence_risk']}")
-        print(f"Position Size Multiplier: {risk_assessment['position_size_mult']:.2f}")
-        
-        print(f"\nHoldings:")
-        for i in range(self.stock_dim):
-            current_price = self.state[i + 1]
-            holdings = self.state[i + self.stock_dim + 1]
-            position_value = current_price * holdings
-            print(f"Stock {i}: {holdings:.0f} shares @ ${current_price:.2f} = ${position_value:,.2f}")
-        
-        print(f"\nTrading Statistics:")
-        print(f"Total Trades: {self.trades}")
-        print(f"Total Trading Cost: ${self.cost:,.2f}")
-        print("-" * 50)
-        
-        return self.state
+def render(self, mode='human'):
+    """Render the environment"""
+    if mode != 'human':
+        raise NotImplementedError(f"{mode} mode is not supported")
+    
+    print(f"\nDate: {self._get_date()}")
+    print(f"Portfolio Value: ${self.asset_memory[-1]:,.2f}")
+    print(f"Cash: ${self.state[0]:,.2f}")
+    
+    risk_assessment = self._assess_market_risk()
+    print(f"\nRisk Assessment:")
+    print(f"VIX Risk Level: {risk_assessment['vix_risk']}")
+    print(f"Turbulence Risk Level: {risk_assessment['turbulence_risk']}")
+    print(f"Position Size Multiplier: {risk_assessment['position_size_mult']:.2f}")
+    
+    print(f"\nHoldings:")
+    for i in range(self.stock_dim):
+        current_price = self.state[i + 1]
+        holdings = self.state[i + self.stock_dim + 1]
+        position_value = current_price * holdings
+        print(f"Stock {i}: {holdings:.0f} shares @ ${current_price:.2f} = ${position_value:,.2f}")
+    
+    print(f"\nTrading Statistics:")
+    print(f"Total Trades: {self.trades}")
+    print(f"Total Trading Cost: ${self.cost:,.2f}")
+    print("-" * 50)
+    
+    return self.state
 
-    def get_sb_env(self):
-        """Get stable-baselines environment wrapper"""
-        e = DummyVecEnv([lambda: self])
-        obs = e.reset()
-        return e, obs
+def get_sb_env(self):
+    """Get stable-baselines environment wrapper"""
+    e = DummyVecEnv([lambda: self])
+    obs = e.reset()
+    return e, obs
 
-    def _seed(self, seed=None):
-        """Set random seed"""
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
+def _seed(self, seed=None):
+    """Set random seed"""
+    self.np_random, seed = seeding.np_random(seed)
+    return [seed]
 
-    def _get_date(self):
-        """Get current date"""
-        if len(self.df.tic.unique()) > 1:
-            date = self.data.date.unique()[0]
-        else:
-            date = self.data.date
-        return date
+def _get_date(self):
+    """Get current date"""
+    if len(self.df.tic.unique()) > 1:
+        date = self.data.date.unique()[0]
+    else:
+        date = self.data.date
+    return date
