@@ -365,7 +365,7 @@ class StockTradingEnv(gym.Env):
                     'amount': sell_amount
                 })
 
-        def _handle_buys(self, actions: np.ndarray, position_size_mult: float) -> None:
+    def _handle_buys(self, actions: np.ndarray, position_size_mult: float) -> None:
         """Enhanced buy handling with additional safeguards"""
         if position_size_mult <= 0:
             return  # No buying in crisis mode
