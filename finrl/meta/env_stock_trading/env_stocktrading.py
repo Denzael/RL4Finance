@@ -104,17 +104,43 @@ class StockTradingEnv(gym.Env):
         if missing_columns:
             raise ValueError(f"DataFrame missing required columns: {missing_columns}")
 
+    
     def _validate_parameters(self, stock_dim, hmax, initial_amount, 
-                           num_stock_shares, buy_cost_pct, sell_cost_pct) -> None:
-        """Validate input parameters"""
+                            num_stock_shares, buy_cost_pct, sell_cost_pct) -> None:
+        """Enhanced parameter validation"""
+        # Basic type checking
         if not all(isinstance(x, (int, float)) for x in [stock_dim, hmax, initial_amount]):
             raise ValueError("stock_dim, hmax, and initial_amount must be numeric")
         
+        # Value validation
+        if initial_amount <= 0:
+            raise ValueError("initial_amount must be positive")
+        if hmax <= 0:
+            raise ValueError("hmax must be positive")
+        if stock_dim <= 0:
+            raise ValueError("stock_dim must be positive")
+            
+        # Array length validation
         if len(num_stock_shares) != stock_dim:
             raise ValueError("Length of num_stock_shares must match stock_dim")
-        
         if len(buy_cost_pct) != stock_dim or len(sell_cost_pct) != stock_dim:
             raise ValueError("Length of cost percentages must match stock_dim")
+            
+        # Value range validation
+        if any(x < 0 for x in num_stock_shares):
+            raise ValueError("num_stock_shares cannot contain negative values")
+        if any(not 0 <= x <= 1 for x in buy_cost_pct + sell_cost_pct):
+            raise ValueError("Cost percentages must be between 0 and 1")
+            
+    
+    def _safe_divide(self, a: float, b: float, default: float = 0.0) -> float:
+        """Safe division handling divide by zero"""
+        try:
+            if b == 0:
+                return default
+            return a / b
+        except:
+            return default
 
     def _calculate_state_space(self) -> int:
         """Calculate the total dimension of the state space"""
@@ -339,34 +365,59 @@ class StockTradingEnv(gym.Env):
                     'amount': sell_amount
                 })
 
-    def _handle_buys(self, actions: np.ndarray, position_size_mult: float) -> None:
-        """Handle buy actions"""
+        def _handle_buys(self, actions: np.ndarray, position_size_mult: float) -> None:
+        """Enhanced buy handling with additional safeguards"""
+        if position_size_mult <= 0:
+            return  # No buying in crisis mode
+            
         buy_index = np.where(actions > 0)[0]
         
         for index in buy_index:
-            if self.state[0] > 0:  # If we have cash
-                max_buy = self.state[0] // (self.state[index + 1] * (1 + self.buy_cost_pct[index]))
+            if self.state[0] <= 0:  # No cash available
+                continue
                 
-                buy_num_shares = min(
-                    max_buy,
-                    self.hmax - self.state[index + self.stock_dim + 1],
-                    actions[index] * self.hmax * position_size_mult
-                )
+            current_price = self.state[index + 1]
+            if current_price <= 0:  # Invalid price
+                continue
                 
-                buy_amount = self.state[index + 1] * buy_num_shares * (1 + self.buy_cost_pct[index])
+            # Calculate maximum shares with safety margin
+            max_buy = self._safe_divide(
+                self.state[0] * 0.9995,  # Leave small cash buffer
+                current_price * (1 + self.buy_cost_pct[index])
+            )
+            
+            # Apply position limits
+            buy_num_shares = min(
+                max_buy,
+                self.hmax - self.state[index + self.stock_dim + 1],
+                actions[index] * self.hmax * position_size_mult
+            )
+            
+            if buy_num_shares <= 0:
+                continue
                 
-                self.state[0] -= buy_amount
-                self.state[index + self.stock_dim + 1] += buy_num_shares
-                self.cost += self.state[index + 1] * buy_num_shares * self.buy_cost_pct[index]
-                self.trades += 1
+            buy_amount = current_price * buy_num_shares * (1 + self.buy_cost_pct[index])
+            
+            # Final cash check
+            if buy_amount > self.state[0]:
+                continue
                 
-                self.trading_memory['buys'].append({
-                    'day': self.day,
-                    'stock': index,
-                    'shares': buy_num_shares,
-                    'price': self.state[index + 1],
-                    'amount': buy_amount
-                })
+            self.state[0] -= buy_amount
+            self.state[index + self.stock_dim + 1] += buy_num_shares
+            self.cost += current_price * buy_num_shares * self.buy_cost_pct[index]
+            self.trades += 1
+            
+            # Bound memory usage
+            if len(self.trading_memory['buys']) >= self.max_memory_length:
+                self.trading_memory['buys'].popleft()
+                
+            self.trading_memory['buys'].append({
+                'day': self.day,
+                'stock': index,
+                'shares': buy_num_shares,
+                'price': current_price,
+                'amount': buy_amount
+            })
 
     def _update_state(self) -> np.ndarray:
         """Update the state space with new day's data"""
@@ -528,39 +579,52 @@ class StockTradingEnv(gym.Env):
             return "Unknown Date"
 
     def get_portfolio_stats(self) -> dict:
-        """Get portfolio statistics"""
+        """Enhanced portfolio statistics with error handling"""
         try:
+            if not self.asset_memory:
+                return {
+                    'current_value': self.initial_amount,
+                    'total_return': 0.0,
+                    'sharpe_ratio': 0.0,
+                    'total_trades': 0,
+                    'total_costs': 0.0,
+                    'returns': []
+                }
+                
             current_value = self.asset_memory[-1]
             initial_value = self.asset_memory[0]
-            total_return = (current_value - initial_value) / initial_value
             
-            returns = np.diff(self.asset_memory) / self.asset_memory[:-1]
-            sharpe_ratio = np.mean(returns) / np.std(returns) if len(returns) > 1 else 0
+            # Safe calculation of total return
+            total_return = self._safe_divide(
+                current_value - initial_value,
+                initial_value
+            )
+            
+            # Calculate returns safely
+            returns = np.array([])
+            if len(self.asset_memory) > 1:
+                returns = np.diff(self.asset_memory) / \
+                    np.maximum(self.asset_memory[:-1], np.full_like(self.asset_memory[:-1], 1e-8))
+                
+            # Calculate Sharpe ratio safely
+            sharpe_ratio = 0.0
+            if len(returns) > 1:
+                std_returns = np.std(returns)
+                if std_returns > 0:
+                    sharpe_ratio = np.mean(returns) / std_returns
             
             return {
-                'current_value': current_value,
-                'total_return': total_return,
-                'sharpe_ratio': sharpe_ratio,
+                'current_value': float(current_value),
+                'total_return': float(total_return),
+                'sharpe_ratio': float(sharpe_ratio),
                 'total_trades': self.trades,
-                'total_costs': self.cost,
+                'total_costs': float(self.cost),
                 'returns': returns.tolist()
             }
+            
         except Exception as e:
             logger.error(f"Error calculating portfolio stats: {e}")
             return {}
-
-    def save_memory_to_df(self, path: str) -> None:
-        """Save trading memory to CSV file"""
-        try:
-            memory_df = pd.DataFrame({
-                'date': list(self.date_memory),
-                'portfolio_value': list(self.asset_memory),
-                'rewards': list(self.rewards_memory)
-            })
-            memory_df.to_csv(path, index=False)
-            logger.info(f"Successfully saved memory to {path}")
-        except Exception as e:
-            logger.error(f"Error saving memory to CSV: {e}")
 
     def close(self) -> None:
         """Clean up environment resources"""
