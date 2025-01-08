@@ -349,7 +349,7 @@ class StockTradingEnv(gym.Env):
                     + [self.data[self.risk_indicator_col]]
                 )
                 if self.vix_col in self.data:
-		state += [self.data[self.vix_col]]
+			state += [self.data[self.vix_col]]
         return state
 
     def _update_state(self):
