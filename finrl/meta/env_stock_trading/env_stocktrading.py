@@ -354,6 +354,81 @@ class StockTradingEnv(gym.Env):
                 pass
 
         return buy_num_shares
+        
+    def step(self, actions):
+    """
+    Execute trading actions and return the next state, reward, and done flag
+    
+    Args:
+        actions: Array of actions for each stock
+        
+    Returns:
+        next_state: Updated environment state
+        reward: Reward for the action
+        done: Whether the episode is finished
+        truncated: Whether episode was artificially terminated
+        info: Additional information
+    """
+    self.terminal = self.day >= len(self.df.index.unique()) - 1
+
+    if self.terminal:
+        return self._handle_terminal()
+
+    else:
+        # Get current date and data
+        self.day += 1
+        self.data = self.df.loc[self.day, :]
+        
+        # Update risk indicators
+        if len(self.df.tic.unique()) > 1:
+            self.turbulence = self.data[self.risk_indicator_col].values[0]
+            if self.vix_col in self.data:
+                self.vix = self.data[self.vix_col].values[0]
+        else:
+            self.turbulence = self.data[self.risk_indicator_col]
+            if self.vix_col in self.data:
+                self.vix = self.data[self.vix_col]
+                
+        # Update state with new prices
+        self.state = self._update_state()
+        
+        # Scale actions from [-1, 1] to concrete number of shares
+        actions = actions * self.hmax
+        
+        # Initialize track records for current step
+        self.actions_memory.append(actions)
+        
+        # Calculate starting total asset value
+        begin_total_asset = self._calculate_total_asset()
+        
+        # Execute trading actions
+        for index, action in enumerate(actions):
+            if action > 0:  # Buy
+                bought_shares = self._buy_stock(index, action)
+            else:  # Sell
+                sold_shares = self._sell_stock(index, -action)
+                
+        # Calculate ending total asset value
+        end_total_asset = self._calculate_total_asset()
+        
+        # Update tracking variables
+        self.asset_memory.append(end_total_asset)
+        self.date_memory.append(self._get_date())
+        
+        # Calculate reward based on asset value change
+        self.reward = (end_total_asset - begin_total_asset) * self.reward_scaling
+        self.rewards_memory.append(self.reward)
+        
+        # Apply risk penalty if turbulence threshold is exceeded
+        if self.turbulence_threshold is not None:
+            if self.turbulence >= self.turbulence_threshold:
+                risk_penalty = self.risk_multiplier * (self.turbulence / self.turbulence_threshold)
+                self.reward -= risk_penalty
+        
+        # Add state to memory for post-episode analysis
+        self.state_memory.append(self.state)
+        
+        return self.state, self.reward, self.terminal, False, {}    
 
     def _handle_terminal(self):
         if self.make_plots:
