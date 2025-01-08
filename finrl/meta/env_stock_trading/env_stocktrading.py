@@ -47,6 +47,7 @@ class StockTradingEnv(gym.Env):
         # Basic parameters with type enforcement
         self.day = int(day)
         self.df = df.copy()  # Make a copy to prevent external modifications
+        self.data = self.df.loc[self.day, :]
         self.stock_dim = stock_dim
         self.hmax = hmax
         self.initial_amount = float(initial_amount)
