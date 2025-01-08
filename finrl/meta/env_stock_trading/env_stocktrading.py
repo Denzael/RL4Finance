@@ -107,6 +107,55 @@ class StockTradingEnv(gym.Env):
         # Initialize random seed
         self._seed()
 
+    def reset(self, seed=None, options=None):
+        """
+        Reset the environment for a new episode.
+        
+        Args:
+            seed: Random seed for reproducibility
+            options: Additional options for reset (not used currently)
+            
+        Returns:
+            observation: Initial state of the environment
+            info: Additional information (empty dict)
+        """
+        # Reset seed if provided
+        if seed is not None:
+            self._seed(seed)
+        
+        # Reset episode variables
+        self.day = 0
+        self.data = self.df.loc[self.day, :]
+        self.terminal = False
+        self.trades = 0
+        self.episode += 1
+        self.reward = 0
+        self.cost = 0
+        
+        # Reset state memory
+        self.asset_memory = [self.initial_amount + np.sum(
+            np.array(self.num_stock_shares) * 
+            np.array(self.state[1:1 + self.stock_dim])
+        )]
+        self.rewards_memory = []
+        self.actions_memory = []
+        self.date_memory = [self._get_date()]
+        
+        # Get initial state
+        self.state = self._initiate_state()
+        
+        # Reset turbulence and VIX
+        if len(self.df.tic.unique()) > 1:
+            self.turbulence = self.data[self.risk_indicator_col].values[0]
+            if self.vix_col in self.data:
+                self.vix = self.data[self.vix_col].values[0]
+        else:
+            self.turbulence = self.data[self.risk_indicator_col]
+            if self.vix_col in self.data:
+                self.vix = self.data[self.vix_col]
+        
+        return self.state, {}
+    
     def _initiate_state(self):
         if self.initial:
             # For Initial State
