@@ -11,7 +11,7 @@ from gymnasium import spaces
 from gymnasium.utils import seeding
 from stable_baselines3.common.vec_env import DummyVecEnv
 from typing import Dict, Optional
-from stock_strategy import HybridSignalGenerator, CompositeStrategy
+from stock_strategy import HybridSignalGenerator, CompositeStrategy,  HybridSignalGenerator, MACDStrategy,BollingerBandsStrategy, RSICCIStrategy,strategy_signal_dim
 
 matplotlib.use("Agg")
 
@@ -48,6 +48,7 @@ class StockTradingEnv(gym.Env):
         iteration="",
         hybrid_strategy: Optional[HybridSignalGenerator] = None,
         strategy_weight: float = 0.3,
+        
     ):
         self.day = day
         self.df = df
