@@ -6,6 +6,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any
 
+
+strategy_signal_dim = 4 
+
 class BaseStrategy(ABC):
     """Abstract base class for all trading strategies"""
     
