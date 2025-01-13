@@ -15,6 +15,11 @@ class BaseStrategy(ABC):
     @abstractmethod
     def generate_signals(self, state, data) -> np.ndarray:
         pass
+        
+    def get_signal_features(self, state, data) -> np.ndarray:
+    """Get strategy signals as features for the model"""
+    signals = self.generate_signals(state, data)
+    return signals
 
 class MACDStrategy(BaseStrategy):
     def generate_signals(self, state, data) -> np.ndarray:
@@ -73,6 +78,23 @@ class CompositeStrategy(BaseStrategy):
         for i, strategy in enumerate(self.strategies):
             combined_signals[i] = strategy.generate_signals(state, data)
         return np.clip(np.average(combined_signals, axis=0, weights=self.weights), -1, 1)
+        
+    def get_hybrid_signals(self, state, data) -> dict:
+    """Generate signals from all strategies as separate features"""
+    strategy_signals = {}
+    for i, strategy in enumerate(self.strategies):
+        if isinstance(strategy, MACDStrategy):
+            strategy_signals['macd_signal'] = strategy.get_signal_features(state, data)
+        elif isinstance(strategy, BollingerBandsStrategy):
+            strategy_signals['bollinger_signal'] = strategy.get_signal_features(state, data)
+        elif isinstance(strategy, RSICCIStrategy):
+            strategy_signals['rscci_signal'] = strategy.get_signal_features(state, data)
+    
+    # Add combined signal
+    combined_signal = self.generate_signals(state, data)
+    strategy_signals['combined_signal'] = combined_signal
+    
+    return strategy_signals
 
 class StrategyEvaluator:
     """Class for strategy evaluation and demonstration generation"""
@@ -179,3 +201,22 @@ def plot_strategy_results(evaluation_metrics: Dict[str, Any]):
     
     plt.tight_layout()
     plt.show()
+
+class HybridSignalGenerator:
+    """Class to manage hybrid signals from strategies and model"""
+    
+    def __init__(self, strategy: CompositeStrategy, strategy_weight: float = 0.3):
+        self.strategy = strategy
+        self.strategy_weight = strategy_weight
+        self.model_weight = 1 - strategy_weight
+    
+    def combine_signals(self, model_action: np.ndarray, state, data) -> np.ndarray:
+        """Combine model actions with strategy signals"""
+        strategy_signals = self.strategy.generate_signals(state, data)
+        hybrid_action = (model_action * self.model_weight + 
+                        strategy_signals * self.strategy_weight)
+        return np.clip(hybrid_action, -1, 1)
+    
+    def get_signal_features(self, state, data) -> dict:
+        """Get all strategy signals as features for the model"""
+        return self.strategy.get_hybrid_signals(state, data)
