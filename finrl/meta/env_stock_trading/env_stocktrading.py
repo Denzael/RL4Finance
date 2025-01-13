@@ -10,6 +10,8 @@ import pandas as pd
 from gymnasium import spaces
 from gymnasium.utils import seeding
 from stable_baselines3.common.vec_env import DummyVecEnv
+from typing import Dict, Optional
+from stock_strategy import HybridSignalGenerator, CompositeStrategy
 
 matplotlib.use("Agg")
 
@@ -44,6 +46,8 @@ class StockTradingEnv(gym.Env):
         model_name="",
         mode="",
         iteration="",
+        hybrid_strategy: Optional[HybridSignalGenerator] = None,
+        strategy_weight: float = 0.3,
     ):
         self.day = day
         self.df = df
@@ -59,7 +63,9 @@ class StockTradingEnv(gym.Env):
         self.tech_indicator_list = tech_indicator_list
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.action_space,))
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(self.state_space,)
+            low=-np.inf, 
+            high=np.inf, 
+            shape=(self.state_space + strategy_signal_dim,)
         )
         self.data = self.df.loc[self.day, :]
         self.terminal = False
@@ -72,6 +78,19 @@ class StockTradingEnv(gym.Env):
         self.model_name = model_name
         self.mode = mode
         self.iteration = iteration
+        self.hybrid_strategy = hybrid_strategy
+        if self.hybrid_strategy is None:
+            self.hybrid_strategy = HybridSignalGenerator(
+                CompositeStrategy(
+                    strategies=[
+                        MACDStrategy(),
+                        BollingerBandsStrategy(),
+                        RSICCIStrategy()
+                    ],
+                    weights=[0.4, 0.3, 0.3]
+                ),
+                strategy_weight=strategy_weight
+            )
         # initalize state
         self.state = self._initiate_state()
 
@@ -298,6 +317,9 @@ class StockTradingEnv(gym.Env):
             # logger.record("environment/total_trades", self.trades)
 
             return self.state, self.reward, self.terminal, False, {}
+                    # Combine model actions with strategy signals
+        if self.hybrid_strategy is not None:
+            actions = self.hybrid_strategy.combine_signals(actions, self.state, self.data)
 
         else:
             actions = actions * self.hmax  # actions initially is scaled between 0 to 1
@@ -452,7 +474,12 @@ class StockTradingEnv(gym.Env):
                     ]
                     + sum(([self.data[tech]] for tech in self.tech_indicator_list), [])
                 )
-        return state
+                        # Add strategy signals to state
+            if self.hybrid_strategy is not None:
+                strategy_signals = self.hybrid_strategy.get_signal_features(state, self.data)
+                for signal_name, signal_value in strategy_signals.items():
+                    state.extend(signal_value.tolist())
+                    return state
 
     def _update_state(self):
         if len(self.df.tic.unique()) > 1:
@@ -478,8 +505,13 @@ class StockTradingEnv(gym.Env):
                 + list(self.state[(self.stock_dim + 1) : (self.stock_dim * 2 + 1)])
                 + sum(([self.data[tech]] for tech in self.tech_indicator_list), [])
             )
-
-        return state
+                # Update strategy signals
+        if self.hybrid_strategy is not None:
+            strategy_signals = self.hybrid_strategy.get_signal_features(state, self.data)
+            for signal_name, signal_value in strategy_signals.items():
+                state.extend(signal_value.tolist())
+        
+                return state
 
     def _get_date(self):
         if len(self.df.tic.unique()) > 1:
