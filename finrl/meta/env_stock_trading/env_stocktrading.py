@@ -87,7 +87,7 @@ class StockTradingEnv(gym.Env):
         self.cost = 0
         self.trades = 0
         self.episode = 0
-        self.asset_memory = [self._calculate_total_asset()]
+        self.asset_memory = []
         self.rewards_memory = []
         self.actions_memory = []
         self.state_memory = []
