@@ -36,7 +36,8 @@ class StockTradingEnv(gym.Env):
         iteration: str = "",
         hybrid_strategy = None,
     ):
-        self.df = df
+        # Store initialization parameters
+        self.df = df.copy()
         self.stock_dim = stock_dim
         self.hmax = hmax
         self.initial_amount = initial_amount
@@ -45,8 +46,8 @@ class StockTradingEnv(gym.Env):
         self.sell_cost_pct = sell_cost_pct
         self.reward_scaling = reward_scaling
         self.state_space = state_space
-        self.action_space = action_space
         self.tech_indicator_list = tech_indicator_list
+        self.action_space = action_space
         self.turbulence_threshold = turbulence_threshold
         self.risk_indicator_col = risk_indicator_col
         self.make_plots = make_plots
@@ -59,12 +60,15 @@ class StockTradingEnv(gym.Env):
         self.iteration = iteration
         self.hybrid_strategy = hybrid_strategy
 
-        # Spaces
+        # Reshape data for strategy if needed
+        self._reshape_data()
+
+        # Action and observation spaces
         self.action_space = spaces.Box(
             low=-1, high=1, shape=(self.action_space,), dtype=np.float32
         )
         
-        # State space includes strategy signals
+        # Add 4 dimensions for strategy signals
         signal_dim = 4  # macd, bollinger, rscci, combined
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -74,7 +78,7 @@ class StockTradingEnv(gym.Env):
         )
 
         # Initialize state
-        self.data = self.df.loc[self.day, :]
+        self.data = self._get_date_data(self.day)
         self.state = self._initiate_state()
         
         # Initialize other variables
@@ -89,12 +93,18 @@ class StockTradingEnv(gym.Env):
         self.state_memory = []
         self.date_memory = [self._get_date()]
 
-    def _calculate_total_asset(self) -> float:
-        """Calculate total asset value"""
-        return self.state[0] + sum(
-            np.array(self.state[1:self.stock_dim + 1]) *
-            np.array(self.state[self.stock_dim + 1:self.stock_dim * 2 + 1])
-        )
+    def _reshape_data(self):
+        """Reshape data for strategy processing"""
+        if len(self.df.tic.unique()) != self.stock_dim:
+            current_date = self.df.loc[self.day, 'date'].iloc[0]
+            self.data_by_date = self.df[self.df['date'] == current_date]
+            
+    def _get_date_data(self, day):
+        """Get data for current date"""
+        if len(self.df.tic.unique()) != self.stock_dim:
+            current_date = self.df['date'].unique()[day]
+            return self.df[self.df['date'] == current_date]
+        return self.df.loc[day, :]
 
     def _initiate_state(self) -> np.ndarray:
         """Initialize the state"""
@@ -115,12 +125,7 @@ class StockTradingEnv(gym.Env):
                 self._get_tech_indicators()  # Technical indicators
             )
 
-        # Add strategy signals if hybrid strategy is enabled
-        if self.hybrid_strategy is not None:
-            strategy_signals = self.hybrid_strategy.get_signal_features(state, self.data)
-            state.extend([v[0] for v in strategy_signals.values()])
-
-        return np.array(state, dtype=np.float32)
+        state = np.array(state, dtype=np.float32)
 
     def _get_stock_prices(self) -> List[float]:
         """Get current stock prices"""
