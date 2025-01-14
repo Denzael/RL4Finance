@@ -236,7 +236,7 @@ class StockTradingEnv(gym.Env):
 
         return self.state, {}
 
-    def get_date(self) -> str:
+    def _get_date(self) -> str:
         """Get current date
         
         Returns:
