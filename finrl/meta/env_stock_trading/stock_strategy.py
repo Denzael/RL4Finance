@@ -1,13 +1,8 @@
 # stock_strategy.py
-
 from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from typing import List, Dict, Any
-
-
-strategy_signal_dim = 4 
 
 class BaseStrategy(ABC):
     """Abstract base class for all trading strategies"""
@@ -16,210 +11,102 @@ class BaseStrategy(ABC):
         self.position = 0
         
     @abstractmethod
-    def generate_signals(self, state, data) -> np.ndarray:
+    def generate_signals(self, state: np.ndarray, data: pd.Series) -> np.ndarray:
+        """Generate trading signals from current state and data"""
         pass
         
-    def get_signal_features(self, state, data) -> np.ndarray:
-    """Get strategy signals as features for the model"""
-    signals = self.generate_signals(state, data)
-    return signals
+    def get_signal_features(self, state: np.ndarray, data: pd.Series) -> np.ndarray:
+        """Get strategy signals as features for the model"""
+        return self.generate_signals(state, data)
 
 class MACDStrategy(BaseStrategy):
-    def generate_signals(self, state, data) -> np.ndarray:
+    def generate_signals(self, state: np.ndarray, data: pd.Series) -> np.ndarray:
         stock_dim = (len(state) - 1) // 3
         signals = np.zeros(stock_dim)
         
-        for i in range(stock_dim):
-            macd = data['macd'].iloc[-1]
-            if macd > 0:
-                signals[i] = 1
-            elif macd < 0:
-                signals[i] = -1
+        # Access MACD values for each stock
+        macd_values = data['macd'].values if isinstance(data['macd'], pd.Series) else np.array([data['macd']])
+        
+        # Generate signals based on MACD
+        signals[macd_values > 0] = 1
+        signals[macd_values < 0] = -1
         return signals
 
 class BollingerBandsStrategy(BaseStrategy):
-    def generate_signals(self, state, data) -> np.ndarray:
+    def generate_signals(self, state: np.ndarray, data: pd.Series) -> np.ndarray:
         stock_dim = (len(state) - 1) // 3
         signals = np.zeros(stock_dim)
         
-        for i in range(stock_dim):
-            current_price = state[i + 1]
-            upper_band = data['boll_ub'].iloc[-1]
-            lower_band = data['boll_lb'].iloc[-1]
-            
-            if current_price < lower_band:
-                signals[i] = 1
-            elif current_price > upper_band:
-                signals[i] = -1
+        # Get current prices and bands
+        current_prices = state[1:stock_dim + 1]
+        upper_bands = data['boll_ub'].values if isinstance(data['boll_ub'], pd.Series) else np.array([data['boll_ub']])
+        lower_bands = data['boll_lb'].values if isinstance(data['boll_lb'], pd.Series) else np.array([data['boll_lb']])
+        
+        # Generate signals based on Bollinger Bands
+        signals[current_prices < lower_bands] = 1
+        signals[current_prices > upper_bands] = -1
         return signals
 
 class RSICCIStrategy(BaseStrategy):
-    def generate_signals(self, state, data) -> np.ndarray:
+    def generate_signals(self, state: np.ndarray, data: pd.Series) -> np.ndarray:
         stock_dim = (len(state) - 1) // 3
         signals = np.zeros(stock_dim)
         
-        for i in range(stock_dim):
-            rsi = data['rsi_30'].iloc[-1]
-            cci = data['cci_30'].iloc[-1]
-            
-            if rsi < 30 and cci < -100:
-                signals[i] = 1
-            elif rsi > 70 and cci > 100:
-                signals[i] = -1
+        # Get RSI and CCI values
+        rsi_values = data['rsi_30'].values if isinstance(data['rsi_30'], pd.Series) else np.array([data['rsi_30']])
+        cci_values = data['cci_30'].values if isinstance(data['cci_30'], pd.Series) else np.array([data['cci_30']])
+        
+        # Generate signals based on RSI and CCI
+        signals[(rsi_values < 30) & (cci_values < -100)] = 1
+        signals[(rsi_values > 70) & (cci_values > 100)] = -1
         return signals
 
 class CompositeStrategy(BaseStrategy):
     def __init__(self, strategies: List[BaseStrategy], weights: List[float]):
         super().__init__()
-        if len(strategies) != len(weights) or not np.isclose(sum(weights), 1.0):
-            raise ValueError("Invalid strategy weights")
+        if not np.isclose(sum(weights), 1.0):
+            raise ValueError("Strategy weights must sum to 1.0")
         self.strategies = strategies
-        self.weights = weights
+        self.weights = np.array(weights)
     
-    def generate_signals(self, state, data) -> np.ndarray:
-        combined_signals = np.zeros((len(self.strategies), (len(state) - 1) // 3))
+    def generate_signals(self, state: np.ndarray, data: pd.Series) -> np.ndarray:
+        stock_dim = (len(state) - 1) // 3
+        combined_signals = np.zeros((len(self.strategies), stock_dim))
+        
         for i, strategy in enumerate(self.strategies):
             combined_signals[i] = strategy.generate_signals(state, data)
+            
         return np.clip(np.average(combined_signals, axis=0, weights=self.weights), -1, 1)
+    
+    def get_signal_features(self, state: np.ndarray, data: pd.Series) -> Dict[str, np.ndarray]:
+        """Generate separate signals from each strategy"""
+        signals = {}
+        for strategy in self.strategies:
+            if isinstance(strategy, MACDStrategy):
+                signals['macd_signal'] = strategy.generate_signals(state, data)
+            elif isinstance(strategy, BollingerBandsStrategy):
+                signals['bollinger_signal'] = strategy.generate_signals(state, data)
+            elif isinstance(strategy, RSICCIStrategy):
+                signals['rscci_signal'] = strategy.generate_signals(state, data)
         
-    def get_hybrid_signals(self, state, data) -> dict:
-    """Generate signals from all strategies as separate features"""
-    strategy_signals = {}
-    for i, strategy in enumerate(self.strategies):
-        if isinstance(strategy, MACDStrategy):
-            strategy_signals['macd_signal'] = strategy.get_signal_features(state, data)
-        elif isinstance(strategy, BollingerBandsStrategy):
-            strategy_signals['bollinger_signal'] = strategy.get_signal_features(state, data)
-        elif isinstance(strategy, RSICCIStrategy):
-            strategy_signals['rscci_signal'] = strategy.get_signal_features(state, data)
-    
-    # Add combined signal
-    combined_signal = self.generate_signals(state, data)
-    strategy_signals['combined_signal'] = combined_signal
-    
-    return strategy_signals
-
-class StrategyEvaluator:
-    """Class for strategy evaluation and demonstration generation"""
-    
-    def __init__(self, env, strategy=None):
-        self.env = env
-        self.strategy = strategy or self.default_strategy()
-    
-    @staticmethod
-    def default_strategy():
-        """Create default composite strategy"""
-        return CompositeStrategy(
-            strategies=[
-                MACDStrategy(),
-                BollingerBandsStrategy(),
-                RSICCIStrategy()
-            ],
-            weights=[0.4, 0.3, 0.3]
-        )
-    
-    def generate_expert_demonstrations(self, num_episodes: int = 100) -> List[Dict]:
-        """Generate expert demonstrations using the current strategy"""
-        demonstrations = []
-        
-        for episode in range(num_episodes):
-            state = self.env.reset()[0]
-            done = False
-            
-            while not done:
-                actions = self.strategy.generate_signals(state, self.env.data)
-                next_state, reward, done, _, info = self.env.step(actions)
-                
-                demonstrations.append({
-                    'state': state.copy(),
-                    'action': actions.copy(),
-                    'reward': reward,
-                    'next_state': next_state.copy(),
-                    'done': done
-                })
-                
-                state = next_state
-            
-            if (episode + 1) % 10 == 0:
-                print(f"Generated {episode + 1} episodes of demonstrations")
-        
-        return demonstrations
-    
-    def evaluate_strategy(self, num_episodes: int = 10) -> Dict[str, Any]:
-        """Evaluate the current strategy's performance"""
-        results = []
-        
-        for episode in range(num_episodes):
-            state = self.env.reset()[0]
-            done = False
-            episode_reward = 0
-            
-            while not done:
-                actions = self.strategy.generate_signals(state, self.env.data)
-                next_state, reward, done, _, info = self.env.step(actions)
-                episode_reward += reward
-                state = next_state
-            
-            results.append({
-                'episode': episode,
-                'reward': episode_reward,
-                'final_value': self.env.asset_memory[-1],
-                'trades': self.env.trades
-            })
-        
-        # Convert results to DataFrame
-        results_df = pd.DataFrame(results)
-        
-        evaluation_metrics = {
-            'mean_reward': results_df['reward'].mean(),
-            'std_reward': results_df['reward'].std(),
-            'mean_final_value': results_df['final_value'].mean(),
-            'std_final_value': results_df['final_value'].std(),
-            'avg_trades_per_episode': results_df['trades'].mean(),
-            'results_df': results_df
-        }
-        
-        return evaluation_metrics
-
-# Helper function to plot strategy results
-def plot_strategy_results(evaluation_metrics: Dict[str, Any]):
-    """Plot the results of strategy evaluation"""
-    results_df = evaluation_metrics['results_df']
-    
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-    
-    # Plot rewards
-    ax1.plot(results_df['episode'], results_df['reward'])
-    ax1.set_title('Rewards per Episode')
-    ax1.set_xlabel('Episode')
-    ax1.set_ylabel('Reward')
-    ax1.grid(True)
-    
-    # Plot final values
-    ax2.plot(results_df['episode'], results_df['final_value'])
-    ax2.set_title('Final Portfolio Value per Episode')
-    ax2.set_xlabel('Episode')
-    ax2.set_ylabel('Portfolio Value')
-    ax2.grid(True)
-    
-    plt.tight_layout()
-    plt.show()
+        signals['combined_signal'] = self.generate_signals(state, data)
+        return signals
 
 class HybridSignalGenerator:
-    """Class to manage hybrid signals from strategies and model"""
-    
     def __init__(self, strategy: CompositeStrategy, strategy_weight: float = 0.3):
+        if not 0 <= strategy_weight <= 1:
+            raise ValueError("Strategy weight must be between 0 and 1")
         self.strategy = strategy
         self.strategy_weight = strategy_weight
         self.model_weight = 1 - strategy_weight
     
-    def combine_signals(self, model_action: np.ndarray, state, data) -> np.ndarray:
+    def combine_signals(self, model_action: np.ndarray, state: np.ndarray, data: pd.Series) -> np.ndarray:
         """Combine model actions with strategy signals"""
         strategy_signals = self.strategy.generate_signals(state, data)
         hybrid_action = (model_action * self.model_weight + 
                         strategy_signals * self.strategy_weight)
         return np.clip(hybrid_action, -1, 1)
     
-    def get_signal_features(self, state, data) -> dict:
+    def get_signal_features(self, state: np.ndarray, data: pd.Series) -> Dict[str, np.ndarray]:
         """Get all strategy signals as features for the model"""
-        return self.strategy.get_hybrid_signals(state, data)
+        return self.strategy.get_signal_features(state, data)
